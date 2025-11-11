@@ -56,6 +56,14 @@ function App() {
   const [horariosError, setHorariosError] = useState('')
   const [hora, setHora] = useState('')
   const POLL_MS = 15000 // refresco periódico de horarios para reflejar reservas recientes
+  // Bloqueos locales por fecha para que las horas reservadas no reaparezcan en ese día
+  const [bloqueos, setBloqueos] = useState({}) // { [fecha: string]: string[] }
+  const filtrarBloqueados = (arr, f) => {
+    const bloqueados = (bloqueos?.[f] || [])
+    if (!Array.isArray(arr)) return []
+    if (!Array.isArray(bloqueados) || bloqueados.length === 0) return arr
+    return arr.filter(h => !bloqueados.includes(h))
+  }
 
   // Formulario cliente
   const [nombre, setNombre] = useState('')
@@ -101,8 +109,9 @@ function App() {
         const params = new URLSearchParams({ servicioId: String(servicioId), fecha })
         const res = await fetch(`/api/horarios?${params.toString()}`)
         if (!res.ok) throw new Error('No se pudieron obtener horarios')
-        const data = await res.json()
-        setHorarios(Array.isArray(data.horarios) ? data.horarios : [])
+  const data = await res.json()
+  const serverList = Array.isArray(data.horarios) ? data.horarios : []
+  setHorarios(filtrarBloqueados(serverList, fecha))
       } catch (e) {
         setHorariosError(e.message)
         setHorarios([])
@@ -122,7 +131,7 @@ function App() {
       fetch(`/api/horarios?${params.toString()}`, { signal: controller.signal })
         .then(r => (r.ok ? r.json() : Promise.reject()))
         .then(d => {
-          if (d && Array.isArray(d.horarios)) setHorarios(d.horarios)
+          if (d && Array.isArray(d.horarios)) setHorarios(filtrarBloqueados(d.horarios, fecha))
         })
         .catch(() => {})
     }, POLL_MS)
@@ -164,6 +173,12 @@ function App() {
       setMensaje({ tipo: 'ok', texto: `Reserva confirmada: ${data?.reserva?.fecha} ${data?.reserva?.hora}` })
       // Quitar el horario reservado de la grilla inmediatamente (optimista)
       setHorarios(prev => prev.filter(h => h !== horaElegida))
+      // Registrar bloqueo local para este día
+      setBloqueos(prev => {
+        const actual = new Set(prev[fecha] || [])
+        actual.add(horaElegida)
+        return { ...prev, [fecha]: Array.from(actual) }
+      })
       // Limpiar formulario
       setHora('')
       setNombre('')
@@ -172,7 +187,7 @@ function App() {
       const params = new URLSearchParams({ servicioId: String(servicioId), fecha })
       fetch(`/api/horarios?${params.toString()}`)
         .then(r => r.json())
-        .then(d => setHorarios(Array.isArray(d.horarios) ? d.horarios : []))
+        .then(d => setHorarios(filtrarBloqueados(Array.isArray(d.horarios) ? d.horarios : [], fecha)))
         .catch(() => {})
     } catch (e) {
       setMensaje({ tipo: 'error', texto: e.message })
