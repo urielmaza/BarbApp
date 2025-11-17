@@ -9,6 +9,32 @@ const SERVICIOS_FAKE = [
   { id: 6, nombre: 'Afeitado', duracion: 30, precio: 1800.0 }
 ]
 
+// Config de horarios locales
+const START_MIN = 9 * 60 + 30 // 09:30
+const END_MIN = 20 * 60 + 30  // 20:30
+const STEP_MIN = 30
+
+function minutesFromTimeStr(hhmm) {
+  if (!hhmm) return -1
+  const [hh, mm] = String(hhmm).slice(0, 5).split(':').map(n => parseInt(n, 10))
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return -1
+  return (hh * 60) + mm
+}
+
+function timeStrFromMinutes(total) {
+  const hh = String(Math.floor(total / 60)).padStart(2, '0')
+  const mm = String(total % 60).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+function generarSlotsBase() {
+  const out = []
+  for (let t = START_MIN; t <= END_MIN; t += STEP_MIN) {
+    out.push(timeStrFromMinutes(t))
+  }
+  return out
+}
+
 function formatDateInput(date) {
   const d = new Date(date)
   const y = d.getFullYear()
@@ -72,6 +98,22 @@ function App() {
     return arr.filter(h => !bloqueados.includes(h))
   }
 
+  // Filtrar horarios pasados si la fecha es hoy, y además ajustar al rango 09:30–20:30
+  const aplicarFiltrosHorario = (arr, f) => {
+    if (!Array.isArray(arr)) return []
+    // Normalizar al rango permitido
+    const enRango = arr.filter(h => {
+      const m = minutesFromTimeStr(h)
+      return m >= START_MIN && m <= END_MIN
+    })
+    const base = filtrarBloqueados(enRango, f)
+    const hoyStr = formatDateInput(new Date())
+    if (f !== hoyStr) return base
+    const now = new Date()
+    const nowMin = now.getHours() * 60 + now.getMinutes()
+    return base.filter(h => minutesFromTimeStr(h) > nowMin)
+  }
+
   // Formulario cliente
   const [nombre, setNombre] = useState('')
   const [telefono, setTelefono] = useState('')
@@ -120,10 +162,12 @@ function App() {
         if (!res.ok) throw new Error('No se pudieron obtener horarios')
   const data = await res.json()
   const serverList = Array.isArray(data.horarios) ? data.horarios : []
-  setHorarios(filtrarBloqueados(serverList, fecha))
+  setHorarios(aplicarFiltrosHorario(serverList, fecha))
       } catch (e) {
-        setHorariosError(e.message)
-        setHorarios([])
+        // Fallback local: generar slots 09:30–20:30 y filtrar por hora actual si corresponde
+        setHorariosError('')
+        const locales = generarSlotsBase()
+        setHorarios(aplicarFiltrosHorario(locales, fecha))
       } finally {
         setHorariosLoading(false)
       }
@@ -140,7 +184,7 @@ function App() {
       fetch(`/api/horarios?${params.toString()}`, { signal: controller.signal })
         .then(r => (r.ok ? r.json() : Promise.reject()))
         .then(d => {
-          if (d && Array.isArray(d.horarios)) setHorarios(filtrarBloqueados(d.horarios, fecha))
+          if (d && Array.isArray(d.horarios)) setHorarios(aplicarFiltrosHorario(d.horarios, fecha))
         })
         .catch(() => {})
     }, POLL_MS)
@@ -203,7 +247,7 @@ function App() {
     const params = new URLSearchParams({ servicioId: String(servicioId), fecha })
     fetch(`/api/horarios?${params.toString()}`)
       .then(r => r.json())
-      .then(d => setHorarios(filtrarBloqueados(Array.isArray(d.horarios) ? d.horarios : [], fecha)))
+      .then(d => setHorarios(aplicarFiltrosHorario(Array.isArray(d.horarios) ? d.horarios : generarSlotsBase(), fecha)))
       .catch(() => {})
   }
 
